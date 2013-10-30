@@ -213,12 +213,14 @@ public class IndexRequestQueue {
         // Perform bulk request
         OperationBatch completeListener = null;
         if (bulkRequestBuilder.numberOfActions() > 0) {
-            completeListener = new OperationBatch(0, toIndex, toDelete);
-            operationBatchList.add(completeListener);
-            try {
-                bulkRequestBuilder.execute().addListener(completeListener);
-            } catch (Exception e) {
-                throw new IndexException("Failed to index/delete " + bulkRequestBuilder.numberOfActions(), e);
+            synchronized(this) {
+                completeListener = new OperationBatch(0, toIndex, toDelete);
+                operationBatchList.add(completeListener);
+                try {
+                    bulkRequestBuilder.execute().addListener(completeListener);
+                } catch (Exception e) {
+                    throw new IndexException("Failed to index/delete " + bulkRequestBuilder.numberOfActions(), e);
+                }
             }
         }
 
@@ -302,7 +304,7 @@ public class IndexRequestQueue {
         }
 
         public void onResponse(BulkResponse bulkResponse) {
-            for (BulkItemResponse item : bulkResponse.items()) {
+            for (BulkItemResponse item : bulkResponse.getItems()) {
                 boolean removeFromQueue = !item.isFailed()
                         || item.getFailureMessage().indexOf("UnavailableShardsException") >= 0;
                 // On shard failure, do not re-push.
@@ -326,7 +328,7 @@ public class IndexRequestQueue {
             } else {
                 fireComplete();
                 if (LOG.isDebugEnabled()) {
-                    LOG.debug("Batch complete: " + bulkResponse.items().length + " actions.");
+                    LOG.debug("Batch complete: " + bulkResponse.getItems().length + " actions.");
                 }
             }
         }

@@ -15,6 +15,14 @@ class ElasticSearchContextHolder {
     Map<String, SearchableClassMapping> mapping = [:]
 
     /**
+     * Setter for dependency injection
+     * @param config
+     */
+    public void setConfig(ConfigObject config) {
+        this.config = config
+    }
+
+    /**
      * Adds a mapping context to the current mapping holder
      *
      * @param scm The SearchableClassMapping instance to add
@@ -68,6 +76,15 @@ class ElasticSearchContextHolder {
      * @return A Class instance or NULL if the class was not found
      */
     Class findMappedClassByElasticType(String elasticTypeName) {
-        mapping.values().find { scm -> scm.elasticTypeName == elasticTypeName }?.domainClass?.clazz
+        findMappingContextByElasticType(elasticTypeName)?.domainClass?.clazz
+    }
+
+    /**
+     * Returns the SearchableClassMapping that is associated to a elasticSearch type
+     * @param elasticTypeName
+     * @return
+     */
+    SearchableClassMapping findMappingContextByElasticType(String elasticTypeName) {
+        mapping.values().find { scm -> scm.elasticTypeName == elasticTypeName }
     }
 }

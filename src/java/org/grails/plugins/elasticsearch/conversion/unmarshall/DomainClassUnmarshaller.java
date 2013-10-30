@@ -53,12 +53,13 @@ public class DomainClassUnmarshaller {
         DefaultUnmarshallingContext unmarshallingContext = new DefaultUnmarshallingContext();
         List results = new ArrayList();
         for(SearchHit hit : hits) {
-            String domainClassName = hit.index().equals(hit.type()) ? DefaultGroovyMethods.capitalize(hit.index()) : (hit.index() + '.' + DefaultGroovyMethods.capitalize(hit.type()));
-            SearchableClassMapping scm = elasticSearchContextHolder.getMappingContext(domainClassName);
+            String type = hit.type();
+            SearchableClassMapping scm = elasticSearchContextHolder.findMappingContextByElasticType(type);
             if (scm == null) {
-                LOG.warn("Unknown SearchHit: " + hit.id() + "#" + hit.type() + ", domain class name: " + domainClassName);
+                LOG.warn("Unknown SearchHit: " + hit.id() + "#" + hit.type() + ", domain class name: ");
                 continue;
             }
+            String domainClassName = scm.getDomainClass().getFullName();
 
             GrailsDomainClassProperty identifier = scm.getDomainClass().getIdentifier();
             Object id = typeConverter.convertIfNecessary(hit.id(), identifier.getType());
@@ -177,7 +178,7 @@ public class DomainClassUnmarshaller {
                 return unmarshallReference(refDomainClass, data, unmarshallingContext);
             }
 
-            if (data.containsKey("class")) {
+            if (data.containsKey("class") && (Boolean)grailsApplication.getFlatConfig().get("elasticSearch.unmarshallComponents")) {
                 // Embedded instance.
                 if (!scpm.isComponent()) {
                     // maybe ignore?
@@ -252,7 +253,7 @@ public class DomainClassUnmarshaller {
                 .type(name)
                 .id(typeConverter.convertIfNecessary(id, String.class)))
                 .actionGet();
-        return unmarshallDomain(domainClass, response.id(), response.sourceAsMap(), unmarshallingContext);
+        return unmarshallDomain(domainClass, response.getId(), response.getSourceAsMap(), unmarshallingContext);
     }
 
 
