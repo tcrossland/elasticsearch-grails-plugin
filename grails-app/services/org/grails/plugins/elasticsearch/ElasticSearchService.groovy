@@ -442,7 +442,7 @@ class ElasticSearchService implements GrailsApplicationAware {
             LOG.debug 'Completed search request.'
             def searchHits = response.getHits()
             def result = [:]
-            result.total = searchHits.totalHits
+            result.total = searchHits.totalHits()
 
             LOG.debug "Search returned ${result.total ?: 0} result(s)."
 
