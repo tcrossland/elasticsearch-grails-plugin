@@ -1,42 +1,61 @@
-grails.project.class.dir = "target/classes"
-grails.project.test.class.dir = "target/test-classes"
-grails.project.test.reports.dir = "target/test-reports"
+grails.project.work.dir = 'target'
 grails.project.docs.output.dir = 'docs' // for the gh-pages branch
 
-//grails.tomcat.jvmArgs = ["-Xmx1024m","-Xms512m", "-agentpath:C:\\Program Files (x86)\\YourKit Java Profiler 9.0.9\\bin\\win64\\yjpagent.dll=sampling,onexit=snapshot"]
-
-//grails.project.war.file = "target/${appName}-${appVersion}.war"
+grails.project.dependency.distribution = {
+    remoteRepository(id: 'snapshots-repo', url: 'http://noams.artifactoryonline.com/noams/grails-elasticsearch-plugin-snapshots/') {
+        authentication username: System.getProperty('DEPLOYER_USERNAME'), password: System.getProperty('DEPLOYER_PASSWORD')
+    }
+    remoteRepository(id: 'rc-repo', url: 'http://noams.artifactoryonline.com/noams/grails-elasticsearch-plugin-rc/') {
+        authentication username: System.getProperty('DEPLOYER_USERNAME'), password: System.getProperty('DEPLOYER_PASSWORD')
+    }
+}
+grails.project.dependency.resolver = 'maven' // or ivy
 grails.project.dependency.resolution = {
-    // inherit Grails' default dependencies
-    inherits("global") {
-        // uncomment to disable ehcache
-        // excludes 'ehcache'
-    }
-    log "warn" // log level of Ivy resolver, either 'error', 'warn', 'info', 'debug' or 'verbose'
-    repositories {
-        grailsPlugins()
-        grailsHome()
-        grailsCentral()
 
-        // uncomment the below to enable remote dependency resolution
-        // from public Maven repositories
-        // mavenLocal()
+    inherits 'global'
+    log 'warn'
+
+    repositories {
+        grailsCentral()
+        mavenLocal()
         mavenCentral()
-        //mavenRepo "http://snapshots.repository.codehaus.org"
-        //mavenRepo "http://repository.codehaus.org"
-        //mavenRepo "http://download.java.net/maven/2/"
-        //mavenRepo "http://repository.jboss.com/maven2/"
-        mavenRepo "http://oss.sonatype.org/content/repositories/releases/"
     }
+
     dependencies {
-        // specify dependencies here under either 'build', 'compile', 'runtime', 'test' or 'provided' scopes eg.
-        runtime "org.elasticsearch:elasticsearch:0.90.5"
-        runtime "org.elasticsearch:elasticsearch-lang-groovy:1.5.0"
-        runtime 'com.spatial4j:spatial4j:0.3'
+        def excludes = {
+            excludes 'slf4j-simple', 'persistence-api', 'commons-logging', 'jcl-over-slf4j', 'slf4j-api', 'jta'
+            excludes 'spring-core', 'spring-beans', 'spring-aop', 'spring-asm', 'spring-webmvc', 'spring-tx', 'spring-context', 'spring-web', 'log4j', 'slf4j-log4j12'
+            excludes group: 'org.grails', name: 'grails-core'
+            excludes group: 'org.grails', name: 'grails-gorm'
+            excludes group: 'org.grails', name: 'grails-test'
+            excludes group: 'xml-apis', name: 'xml-apis'
+            excludes 'ehcache-core'
+            transitive = false
+        }
+
+        def datastoreVersion = '3.1.1.RELEASE'
+
+        provided("org.grails:grails-datastore-gorm-plugin-support:$datastoreVersion",
+                "org.grails:grails-datastore-gorm:$datastoreVersion",
+                "org.grails:grails-datastore-core:$datastoreVersion",
+                "org.grails:grails-datastore-web:$datastoreVersion", excludes)
+
+        runtime 'org.elasticsearch:elasticsearch-groovy:1.4.4', {
+            excludes 'groovy-all'
+        }
+        runtime 'com.spatial4j:spatial4j:0.4.1'
+
+        compile 'com.vividsolutions:jts:1.13'
+
+        test 'com.googlecode.json-simple:json-simple:1.1.1'
     }
+
     plugins {
-		runtime ":hibernate:3.6.10.10"
-        build (":release:3.0.1", ":rest-client-builder:2.0.1") {
+        build ':release:3.0.1', ':rest-client-builder:2.0.3', {
+            export = false
+        }
+
+        test(':hibernate:3.6.10.16', ':tomcat:7.0.54') {
             export = false
         }
     }

@@ -4,6 +4,10 @@ abstract class AbstractImage {
     String name
 
     static constraints = {
-        name nullable:true
+        name nullable: true
+    }
+
+    static mapping = {
+        autoImport(false)
     }
 }

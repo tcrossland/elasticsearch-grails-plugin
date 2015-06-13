@@ -16,19 +16,24 @@
 
 package org.grails.plugins.elasticsearch
 
-import org.springframework.beans.factory.FactoryBean
-import static org.elasticsearch.node.NodeBuilder.*
+import static org.elasticsearch.node.NodeBuilder.nodeBuilder
+
 import org.elasticsearch.client.transport.TransportClient
 import org.elasticsearch.common.settings.ImmutableSettings
 import org.elasticsearch.common.transport.InetSocketTransportAddress
-import org.apache.log4j.Logger
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.FactoryBean
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 
 class ClientNodeFactoryBean implements FactoryBean {
-    ElasticSearchContextHolder elasticSearchContextHolder
-    static SUPPORTED_MODES = ['local', 'transport', 'node', 'dataNode']
-    private static final LOG = Logger.getLogger(ClientNodeFactoryBean)
 
-    def node
+    static final SUPPORTED_MODES = ['local', 'transport', 'node', 'dataNode']
+
+    private static final Logger LOG = LoggerFactory.getLogger(this)
+
+    ElasticSearchContextHolder elasticSearchContextHolder
+	 def node
 
     Object getObject() {
         // Retrieve client mode, default is "node"
@@ -37,7 +42,15 @@ class ClientNodeFactoryBean implements FactoryBean {
             throw new IllegalArgumentException("Invalid client mode, expected values were ${SUPPORTED_MODES}.")
         }
         def nb = nodeBuilder()
-        def transportClient = null
+
+        def configFile = elasticSearchContextHolder.config.bootstrap.config.file
+        if (configFile) {
+            LOG.info "Looking for bootstrap configuration file at: $configFile"
+            def resource = new PathMatchingResourcePatternResolver().getResource(configFile)
+            nb.settings(ImmutableSettings.settingsBuilder().loadFromUrl(resource.URL))
+        }
+
+        def transportClient
         // Cluster name
         if (elasticSearchContextHolder.config.cluster.name) {
             nb.clusterName(elasticSearchContextHolder.config.cluster.name)
@@ -95,6 +108,11 @@ class ClientNodeFactoryBean implements FactoryBean {
                         nb.settings().put("index.queryparser.types.${type}".toString(), clz)
                     }
                 }
+
+                def pluginsDirectory = elasticSearchContextHolder.config.path.plugins
+                if(pluginsDirectory){
+                    nb.settings().put('path.plugins', pluginsDirectory as String)
+                }
                 nb.local(true)
                 break
 
@@ -127,18 +145,28 @@ class ClientNodeFactoryBean implements FactoryBean {
         }
         if (transportClient) {
             return transportClient
-        } else {
-            // Avoiding this:
-            node = nb.node()
-            node.start()
-            def client = node.client()
-            // Wait for the cluster to become alive.
-            //            LOG.info "Waiting for ElasticSearch GREEN status."
-            //            client.admin().cluster().health(new ClusterHealthRequest().waitForGreenStatus()).actionGet()
-            return client
         }
+		
+	//Inject http settings...
+	if(elasticSearchContextHolder.config.http){
+		flattenMap(elasticSearchContextHolder.config.http).each { p ->
+			nb.settings().put("http.${p.key}",p.value as String)
+		}
+	}
+		
+        // Avoiding this:
+        node = nb.node()
+        node.start()
+        def client = node.client()
+        // Wait for the cluster to become alive.
+        //            LOG.info "Waiting for ElasticSearch GREEN status."
+        //            client.admin().cluster().health(new ClusterHealthRequest().waitForGreenStatus()).actionGet()
+        return client
     }
-
+    //From http://groovy.329449.n5.nabble.com/Flatten-Map-using-closure-td364360.html
+    def flattenMap(map){
+	    [:].putAll(map.entrySet().flatten{ it.value instanceof Map ? it.value.collect{ k, v -> new MapEntry(it.key + '.' + k, v)} : it })
+    }
     Class getObjectType() {
         return org.elasticsearch.client.Client
     }

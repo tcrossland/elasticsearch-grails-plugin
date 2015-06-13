@@ -17,39 +17,40 @@ package org.grails.plugins.elasticsearch
 
 import org.codehaus.groovy.grails.commons.GrailsApplication
 import org.codehaus.groovy.grails.plugins.support.aware.GrailsApplicationAware
-import org.elasticsearch.client.Client
-import org.elasticsearch.action.search.SearchType
-import org.elasticsearch.groovy.common.xcontent.GXContentBuilder
-
-import static org.elasticsearch.client.Requests.searchRequest
-import static org.elasticsearch.search.builder.SearchSourceBuilder.searchSource
-import static org.elasticsearch.index.query.QueryBuilders.queryString
-import org.apache.log4j.Logger
+import org.elasticsearch.action.count.CountRequest
 import org.elasticsearch.action.search.SearchRequest
+import org.elasticsearch.action.search.SearchType
+import org.elasticsearch.action.support.QuerySourceBuilder
+import org.elasticsearch.client.Client
+import org.elasticsearch.index.query.QueryBuilder
+import org.elasticsearch.index.query.QueryStringQueryBuilder
+import org.elasticsearch.index.query.FilterBuilder
+import org.elasticsearch.search.SearchHit
 import org.elasticsearch.search.builder.SearchSourceBuilder
 import org.elasticsearch.search.highlight.HighlightBuilder
-import org.elasticsearch.search.SearchHit
+import org.elasticsearch.search.sort.SortBuilder
 import org.elasticsearch.search.sort.SortOrder
-import org.elasticsearch.action.count.CountRequest
-import org.elasticsearch.action.ActionRequest
-import org.elasticsearch.client.Requests
-import org.elasticsearch.action.support.broadcast.BroadcastOperationResponse
+import org.grails.plugins.elasticsearch.mapping.SearchableClassMapping
+import org.grails.plugins.elasticsearch.util.GXContentBuilder
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 
-public class ElasticSearchService implements GrailsApplicationAware {
-    static LOG = Logger.getLogger(ElasticSearchService.class)
+import static org.elasticsearch.index.query.QueryBuilders.queryString
+import static org.elasticsearch.index.query.QueryStringQueryBuilder.Operator
+
+class ElasticSearchService implements GrailsApplicationAware {
+    static final Logger LOG = LoggerFactory.getLogger(this)
 
     private static final int INDEX_REQUEST = 0
     private static final int DELETE_REQUEST = 1
 
     GrailsApplication grailsApplication
     def elasticSearchHelper
-    def sessionFactory
-    def persistenceInterceptor
     def domainInstancesRebuilder
     def elasticSearchContextHolder
     def indexRequestQueue
 
-    boolean transactional = false
+    static transactional = false
 
     /**
      * Global search using Query DSL builder.
@@ -58,9 +59,9 @@ public class ElasticSearchService implements GrailsApplicationAware {
      * @param closure Query closure
      * @return search results
      */
-    def search(Map params, Closure query) {
-        SearchRequest request = buildSearchRequest(query, params)
-        return doSearch(request, params)
+    def search(Map params, Closure query, filter = null) {
+        SearchRequest request = buildSearchRequest(query, filter, params)
+        search(request, params)
     }
 
     /**
@@ -70,8 +71,27 @@ public class ElasticSearchService implements GrailsApplicationAware {
      * @param params Search parameters
      * @return search results
      */
-    def search(Closure query, Map params = [:]) {
-        return search(params, query)
+    def search(Closure query, filter = null, Map params = [:]) {
+        search(params, query, filter)
+    }
+
+    def search(Closure query, Map params) {
+        search(params, query)
+    }
+
+	/**
+	 * Alias for the search(Map params, QueryBuilder query, Closure filter) signature
+	 * 
+	 * @param query QueryBuilder query
+	 * @return
+	 */
+    def search(QueryBuilder query, filter = null, Map params = [:]) {
+        search(params, query, filter)
+    }
+
+    def search(Map params, QueryBuilder query, filter = null) {
+        SearchRequest request = buildSearchRequest(query, filter, params)
+        search(request, params)
     }
 
     /**
@@ -82,9 +102,14 @@ public class ElasticSearchService implements GrailsApplicationAware {
      * @return A Map containing the search results
      */
     def search(String query, Map params = [:]) {
-        SearchRequest request = buildSearchRequest(query, params)
-        return doSearch(request, params)
+        SearchRequest request = buildSearchRequest(query, null, params)
+        search(request, params)
     }
+	
+	def search(String query, filter, Map params = [:]){
+		SearchRequest request = buildSearchRequest(query, filter, params)
+		search(request, params)
+	}
 
     /**
      * Returns the number of hits for a peculiar query
@@ -93,9 +118,9 @@ public class ElasticSearchService implements GrailsApplicationAware {
      * @param params
      * @return An Integer representing the number of hits for the query
      */
-    public Integer countHits(String query, Map params = [:]) {
+    Integer countHits(String query, Map params = [:]) {
         CountRequest request = buildCountRequest(query, params)
-        return doCount(request, params)
+        count(request, params)
     }
 
     /**
@@ -105,9 +130,9 @@ public class ElasticSearchService implements GrailsApplicationAware {
      * @param params
      * @return An Integer representing the number of hits for the query
      */
-    public Integer countHits(Map params, Closure query) {
+    Integer countHits(Map params, Closure query) {
         CountRequest request = buildCountRequest(query, params)
-        return doCount(request, params)
+        count(request, params)
     }
 
     /**
@@ -117,8 +142,8 @@ public class ElasticSearchService implements GrailsApplicationAware {
      * @param params
      * @return An Integer representing the number of hits for the query
      */
-    public Integer countHits(Closure query, Map params = [:]) {
-        return countHits(params, query)
+    Integer countHits(Closure query, Map params = [:]) {
+        countHits(params, query)
     }
 
     /**
@@ -129,7 +154,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      *
      * @param options indexing options
      */
-    public void index(Map options) {
+    void index(Map options) {
         doBulkRequest(options, INDEX_REQUEST)
     }
 
@@ -138,7 +163,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      *
      * @param domainClass List of searchable class
      */
-    public void index(Class... domainClass) {
+    void index(Class... domainClass) {
         index(class: (domainClass as Collection<Class>))
     }
 
@@ -147,7 +172,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      *
      * @param instances A Collection of searchable instances to index
      */
-    public void index(Collection<GroovyObject> instances) {
+    void index(Collection<GroovyObject> instances) {
         doBulkRequest(instances, INDEX_REQUEST)
     }
 
@@ -156,7 +181,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      *
      * @param instances
      */
-    public void index(GroovyObject... instances) {
+    void index(GroovyObject... instances) {
         index(instances as Collection<GroovyObject>)
     }
 
@@ -168,7 +193,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      *
      * @param options indexing options
      */
-    public void unindex(Map options) {
+    void unindex(Map options) {
         doBulkRequest(options, DELETE_REQUEST)
     }
 
@@ -177,7 +202,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      *
      * @param domainClass List of searchable class
      */
-    public void unindex(Class... domainClass) {
+    void unindex(Class... domainClass) {
         unindex(class: (domainClass as Collection<Class>))
     }
 
@@ -186,7 +211,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      *
      * @param instances A Collection of searchable instances to index
      */
-    public void unindex(Collection<GroovyObject> instances) {
+    void unindex(Collection<GroovyObject> instances) {
         doBulkRequest(instances, DELETE_REQUEST)
     }
 
@@ -195,7 +220,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      *
      * @param instances
      */
-    public void unindex(GroovyObject... instances) {
+    void unindex(GroovyObject... instances) {
         unindex(instances as Collection<GroovyObject>)
     }
 
@@ -231,24 +256,40 @@ public class ElasticSearchService implements GrailsApplicationAware {
                     LOG.debug("Deleting all instances of ${scm.domainClass}")
                 }
 
-                // The index is splitted to avoid out of memory exception
+                // The index is split to avoid out of memory exception
                 def count = scm.domainClass.clazz.count() ?: 0
+                LOG.debug("Found $count instances of ${scm.domainClass}")
+
                 int nbRun = Math.ceil(count / maxRes)
 
-                scm.domainClass.clazz.withNewSession {session ->
-                    for(int i = 0; i < nbRun; i++) {
-                        scm.domainClass.clazz.withCriteria {
-                            firstResult(i * maxRes)
+                LOG.debug("Maximum entries allowed in each bulk request is $maxRes, so indexing is split to $nbRun iterations")
+
+                scm.domainClass.clazz.withNewSession { session ->
+                    for (int i = 0; i < nbRun; i++) {
+                        def resultToStartFrom = i * maxRes
+
+                        LOG.debug("Bulk index iteration ${i+1}: fetching $maxRes results starting from ${resultToStartFrom}")
+
+                        def results = scm.domainClass.clazz.withCriteria {
+                            firstResult(resultToStartFrom)
                             maxResults(maxRes)
-                        }.each {
+                            order('id', 'asc')
+                        }
+
+                        LOG.debug("Bulk index iteration ${i+1}: found ${results.size()} results")
+                        results.each {
                             if (operationType == INDEX_REQUEST) {
                                 indexRequestQueue.addIndexRequest(it)
+                                LOG.debug("Adding the document ${it.id} to the index request queue")
                             } else if (operationType == DELETE_REQUEST) {
                                 indexRequestQueue.addDeleteRequest(it)
+                                LOG.debug("Adding the document ${it.id} to the delete request queue")
                             }
                         }
                         indexRequestQueue.executeRequests()
                         session.clear()
+
+                        log.info("Request iteration ${i+1} out of $nbRun finished")
                     }
                 }
 
@@ -265,7 +306,7 @@ public class ElasticSearchService implements GrailsApplicationAware {
      * @param operationType The type of the operation (INDEX_REQUEST, DELETE_REQUEST)
      * @return
      */
-    private doBulkRequest(Collection<GroovyObject> instances, int operationType) {
+    private void doBulkRequest(Collection<GroovyObject> instances, int operationType) {
         instances.each {
             def scm = elasticSearchContextHolder.getMappingContextByType(it.class)
             if (scm && scm.root) {
@@ -289,45 +330,56 @@ public class ElasticSearchService implements GrailsApplicationAware {
      */
     private CountRequest buildCountRequest(query, Map params) {
         CountRequest request = new CountRequest()
-        this.resolveIndicesAndTypes(request, params)
 
         // Handle the query, can either be a closure or a string
         if (query instanceof Closure) {
-            request.query(new GXContentBuilder().buildAsBytes(query))
+            request.source(new GXContentBuilder().buildAsBytes(query))
         } else {
-            request.query(queryString(query))
+            Operator defaultOperator = params['default_operator'] ?: Operator.AND
+            QueryStringQueryBuilder builder = queryString(query).defaultOperator(defaultOperator)
+            if (params.analyzer) {
+                builder.analyzer(params.analyzer)
+            }
+            request.source(new QuerySourceBuilder().setQuery(builder))
         }
 
-        return request
+        request
     }
 
     /**
      * Builds a search request
      *
      * @param params The query parameters
-     * @param query The search query, whether a String or a Closure
+     * @param query The search query, whether a String, a Closure or a QueryBuilder
+     * @param filter The search filter, whether a Closure or a FilterBuilder
      * @return The SearchRequest instance
      */
-    private SearchRequest buildSearchRequest(query, Map params) {
-        SearchRequest request = new SearchRequest()
-        request.searchType SearchType.DFS_QUERY_THEN_FETCH
-
-        this.resolveIndicesAndTypes(request, params)
-
+    private SearchRequest buildSearchRequest(query, filter, Map params) {
         SearchSourceBuilder source = new SearchSourceBuilder()
 
         source.from(params.from ? params.from as int : 0)
-        source.size(params.size ? params.size as int : 60)
-        source.explain(params.explain ?: true)
+                .size(params.size ? params.size as int : 60)
+                .explain(params.explain ?: true).minScore(params.min_score ?: 0)
+
         if (params.sort) {
-            source.sort(params.sort, SortOrder.valueOf(params.order?.toUpperCase() ?: "ASC"))
+            def sorters = (params.sort instanceof Collection) ? params.sort : [params.sort]
+
+            sorters.each {
+                if (it instanceof SortBuilder) {
+                    source.sort(it as SortBuilder)
+                } else {
+                    source.sort(it, SortOrder.valueOf(params.order?.toUpperCase() ?: "ASC"))
+                }
+            }
         }
 
         // Handle the query, can either be a closure or a string
-        if (query instanceof Closure) {
-            source.query(new GXContentBuilder().buildAsBytes(query))
-        } else {
-            source.query(queryString(query))
+        if (query) {
+            setQueryInSource(source, query, params)
+        }
+
+        if (filter) {
+            setFilterInSource(source, filter, params)
         }
 
         // Handle highlighting
@@ -340,11 +392,117 @@ public class ElasticSearchService implements GrailsApplicationAware {
             highlightBuilder.call()
             source.highlight highlighter
         }
+
+        source.explain(false)
+
+        SearchRequest request = new SearchRequest()
+        request.searchType SearchType.DFS_QUERY_THEN_FETCH
         request.source source
 
         return request
     }
 
+    SearchSourceBuilder setQueryInSource(SearchSourceBuilder source, String query, Map params = [:]) {
+        Operator defaultOperator = params['default_operator'] ?: Operator.AND
+        QueryStringQueryBuilder builder = queryString(query).defaultOperator(defaultOperator)
+        if (params.analyzer) {
+            builder.analyzer(params.analyzer)
+        }
+        source.query(builder)
+    }
+
+    SearchSourceBuilder setQueryInSource(SearchSourceBuilder source, Closure query, Map params = [:]) {
+        source.query(new GXContentBuilder().buildAsBytes(query))
+    }
+
+    SearchSourceBuilder setQueryInSource(SearchSourceBuilder source, QueryBuilder query, Map params = [:]) {
+        source.query(query)
+    }
+	
+	SearchSourceBuilder setFilterInSource(SearchSourceBuilder source, Closure filter, Map params = [:]){
+		source.postFilter(new GXContentBuilder().buildAsBytes(filter))
+	}
+	
+	SearchSourceBuilder setFilterInSource(SearchSourceBuilder source, FilterBuilder filter, Map params = [:]){
+		source.postFilter(filter)
+	}
+
+    /**
+     * Computes a search request and builds the results
+     *
+     * @param request The SearchRequest to compute
+     * @param params Search parameters
+     * @return A Map containing the search results
+     */
+    def search(SearchRequest request, Map params) {
+        resolveIndicesAndTypes(request, params)
+        elasticSearchHelper.withElasticSearch { Client client ->
+            LOG.debug 'Executing search request.'
+            def response = client.search(request).actionGet()
+            LOG.debug 'Completed search request.'
+            def searchHits = response.getHits()
+            def result = [:]
+            result.total = searchHits.totalHits
+
+            LOG.debug "Search returned ${result.total ?: 0} result(s)."
+
+            // Convert the hits back to their initial type
+            result.searchResults = domainInstancesRebuilder.buildResults(searchHits)
+
+            // Extract highlight information.
+            // Right now simply give away raw results...
+            if (params.highlight) {
+                def highlightResults = []
+                for (SearchHit hit : searchHits) {
+                    highlightResults << hit.highlightFields
+                }
+                result.highlight = highlightResults
+            }
+
+            LOG.debug 'Adding score information to results.'
+
+            //Extract score information
+            //Records a map from hits of (hit.id, hit.score) returned in 'scores'
+            if (params.score) {
+                def scoreResults = [:]
+                for (SearchHit hit : searchHits) {
+                    scoreResults[(hit.id)] = hit.score
+                }
+                result.scores = scoreResults
+            }
+
+            if (params.sort) {
+                def sortValues = [:]
+                searchHits.each { SearchHit hit ->
+                    sortValues[hit.id] = hit.sortValues
+                }
+                result.sort = sortValues
+            }
+
+            result
+        }
+    }
+
+    /**
+     * Computes a count request and returns the results
+     *
+     * @param request
+     * @param params
+     * @return Integer The number of hits for the query
+     */
+    Integer count(CountRequest request, Map params) {
+        resolveIndicesAndTypes(request, params)
+        elasticSearchHelper.withElasticSearch { Client client ->
+            LOG.debug 'Executing count request.'
+            def response = client.count(request).actionGet()
+            LOG.debug 'Completed count request.'
+            def result = response.count ?: 0
+
+            LOG.debug "${result} hit(s) matched the specified query."
+
+            result
+        }
+    }
     /**
      * Sets the indices & types properties on SearchRequest & CountRequest
      *
@@ -363,12 +521,12 @@ public class ElasticSearchService implements GrailsApplicationAware {
                 indices = [params.indices.toLowerCase()]
             } else if (params.indices instanceof Class) {
                 // Resolved with the class type
-                def scm = elasticSearchContextHolder.getMappingContextByType(params.indices)
-                indices = [scm.indexName]
+                SearchableClassMapping scm = elasticSearchContextHolder.getMappingContextByType(params.indices)
+                indices = [scm.queryingIndex]
             } else if (params.indices instanceof Collection<Class>) {
-                 indices = params.indices.collect { c ->
-                    def scm = elasticSearchContextHolder.getMappingContextByType(c)
-                    scm.indexName
+                indices = params.indices.collect { c ->
+                    SearchableClassMapping scm = elasticSearchContextHolder.getMappingContextByType(c)
+                    scm.queryingIndex
                 }
             }
             request.indices((indices ?: params.indices) as String[])
@@ -387,14 +545,6 @@ public class ElasticSearchService implements GrailsApplicationAware {
                     throw new IllegalArgumentException("Unknown object type: ${params.types}")
                 }
                 types = [scm.elasticTypeName]
-            } else if (params.types instanceof Collection<String>) {
-                types = params.types.collect { t ->
-                    def scm = elasticSearchContextHolder.getMappingContext(t)
-                    if (!scm) {
-                        throw new IllegalArgumentException("Unknown object type: ${params.types}")
-                    }
-                    scm.elasticTypeName
-                }
             } else if (params.types instanceof Class) {
                 // User can also pass a class to determine the type
                 def scm = elasticSearchContextHolder.getMappingContextByType(params.types)
@@ -402,9 +552,21 @@ public class ElasticSearchService implements GrailsApplicationAware {
                     throw new IllegalArgumentException("Unknown object type: ${params.types}")
                 }
                 types = [scm.elasticTypeName]
-            } else if (params.types instanceof Collection<Class>) {
+            } else if (params.types instanceof Collection && !params.types.empty) {
+                def firstCollectionElement = params.types.first()
+
+                def typeCollectionMethod
+                if (firstCollectionElement instanceof Class) {
+                    typeCollectionMethod = { type ->
+                        elasticSearchContextHolder.getMappingContextByType(type)
+                    }
+                } else {
+                    typeCollectionMethod = { name ->
+                        elasticSearchContextHolder.getMappingContext(name)
+                    }
+                }
                 types = params.types.collect { t ->
-                    def scm = elasticSearchContextHolder.getMappingContextByType(t)
+                    def scm = typeCollectionMethod.call(t)
                     if (!scm) {
                         throw new IllegalArgumentException("Unknown object type: ${params.types}")
                     }
@@ -412,72 +574,6 @@ public class ElasticSearchService implements GrailsApplicationAware {
                 }
             }
             request.types(types as String[])
-        }
-    }
-
-    /**
-     * Computes a search request and builds the results
-     *
-     * @param request The SearchRequest to compute
-     * @param params Search parameters
-     * @return A Map containing the search results
-     */
-    private doSearch(SearchRequest request, Map params) {
-        elasticSearchHelper.withElasticSearch { Client client ->
-            def response = client.search(request).actionGet()
-            def searchHits = response.hits
-            def result = [:]
-            result.total = searchHits.totalHits
-
-            LOG.debug "Search returned ${result.total ?: 0} result(s)."
-
-            // Convert the hits back to their initial type
-            result.searchResults = domainInstancesRebuilder.buildResults(searchHits)
-
-            // Extract highlight information.
-            // Right now simply give away raw results...
-            if (params.highlight) {
-                def highlightResults = []
-                for (SearchHit hit: searchHits) {
-                    highlightResults << hit.highlightFields
-                }
-                result.highlight = highlightResults
-            }
-
-            LOG.debug "Adding score information to results."
-
-            //Extract score information
-            //Records a map from hits of (hit.id, hit.score) returned in 'scores'
-            if (params.score) {
-                def scoreResults = [:]
-                for (SearchHit hit: searchHits) {
-                    if ( scoreResults[ hit.index + "." + hit.type ] == null ) {
-                        scoreResults[ hit.index + "." + hit.type ] = [:]
-                    }
-                    scoreResults[ hit.index + "." + hit.type ][ hit.id ] = hit.score
-                }
-                result.scores = scoreResults
-            }
-
-            return result
-        }
-    }
-
-    /**
-     * Computes a count request and returns the results
-     *
-     * @param request
-     * @param params
-     * @return Integer The number of hits for the query
-     */
-    private doCount(CountRequest request, Map params) {
-        elasticSearchHelper.withElasticSearch { Client client ->
-            def response = client.count(request).actionGet()
-            def result = response.count ?: 0
-
-            LOG.debug "${result} hit(s) matched the specified query."
-
-            return result
         }
     }
 }

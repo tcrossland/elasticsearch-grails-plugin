@@ -16,22 +16,15 @@
 
 package org.grails.plugins.elasticsearch.conversion
 
-import org.codehaus.groovy.grails.commons.GrailsDomainClassProperty
-import org.elasticsearch.common.xcontent.XContentBuilder
-import static org.elasticsearch.common.xcontent.XContentFactory.*
-import org.codehaus.groovy.grails.commons.GrailsDomainClass
-import org.codehaus.groovy.grails.commons.ApplicationHolder
-import org.grails.plugins.elasticsearch.conversion.marshall.DeepDomainClassMarshaller
-import org.grails.plugins.elasticsearch.conversion.marshall.DefaultMarshallingContext
-import org.grails.plugins.elasticsearch.conversion.marshall.DefaultMarshaller
-import org.grails.plugins.elasticsearch.conversion.marshall.MapMarshaller
-import org.grails.plugins.elasticsearch.conversion.marshall.CollectionMarshaller
 import org.codehaus.groovy.grails.commons.DomainClassArtefactHandler
+import org.codehaus.groovy.grails.commons.GrailsDomainClass
+import org.elasticsearch.common.xcontent.XContentBuilder
+import org.grails.plugins.elasticsearch.conversion.marshall.*
+import org.grails.plugins.elasticsearch.unwrap.DomainClassUnWrapperChain
+
 import java.beans.PropertyEditor
-import org.grails.plugins.elasticsearch.conversion.marshall.PropertyEditorMarshaller
-import org.grails.plugins.elasticsearch.conversion.marshall.Marshaller
-import org.grails.plugins.elasticsearch.conversion.marshall.SearchableReferenceMarshaller
-import org.codehaus.groovy.grails.orm.hibernate.cfg.GrailsHibernateUtil
+
+import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder
 
 /**
  * Marshall objects as JSON.
@@ -40,12 +33,13 @@ class JSONDomainFactory {
 
     def elasticSearchContextHolder
     def grailsApplication
+    DomainClassUnWrapperChain domainClassUnWrapperChain
 
     /**
      * The default marshallers, not defined by user
      */
-    def static DEFAULT_MARSHALLERS = [
-            (Map): MapMarshaller,
+    static DEFAULT_MARSHALLERS = [
+            (Map)       : MapMarshaller,
             (Collection): CollectionMarshaller
     ]
 
@@ -55,11 +49,11 @@ class JSONDomainFactory {
      * @param marshallingContext The marshalling context associate with the current marshalling process
      * @return Object The result of the marshall operation.
      */
-    public delegateMarshalling(object, marshallingContext, maxDepth = 0) {
+    def delegateMarshalling(object, marshallingContext, maxDepth = 0) {
         if (object == null) {
             return null
         }
-        def marshaller = null
+        def marshaller
         def objectClass = object.getClass()
 
         // Resolve collections.
@@ -67,7 +61,6 @@ class JSONDomainFactory {
         if (object instanceof Collection) {
             marshaller = new CollectionMarshaller()
         }
-
 
         if (!marshaller && DEFAULT_MARSHALLERS[objectClass]) {
             marshaller = DEFAULT_MARSHALLERS[objectClass].newInstance()
@@ -86,14 +79,20 @@ class JSONDomainFactory {
                     // Property editor?
                     if (converter instanceof Class) {
                         if (PropertyEditor.isAssignableFrom(converter)) {
-                            marshaller = new PropertyEditorMarshaller(propertyEditorClass:converter)
+                            marshaller = new PropertyEditorMarshaller(propertyEditorClass: converter)
                         }
                     }
+                } else if(propertyMapping?.isDynamic()){
+                    marshaller = new DynamicValueMarshaller()
                 } else if (propertyMapping?.reference) {
                     def refClass = propertyMapping.getBestGuessReferenceType()
-                    marshaller = new SearchableReferenceMarshaller(refClass:refClass)
+                    marshaller = new SearchableReferenceMarshaller(refClass: refClass)
                 } else if (propertyMapping?.component) {
-                    marshaller = new DeepDomainClassMarshaller()
+                    if (propertyMapping?.isGeoPoint()) {
+                        marshaller = new GeoPointMarshaller()
+                    } else {
+                        marshaller = new DeepDomainClassMarshaller()
+                    }
                 }
             }
         }
@@ -102,12 +101,16 @@ class JSONDomainFactory {
             // TODO : support user custom marshaller/converter (& marshaller registration)
             // Check for domain classes
             if (DomainClassArtefactHandler.isDomainClass(objectClass)) {
-                /*def domainClassName = objectClass.simpleName.substring(0,1).toLowerCase() + objectClass.simpleName.substring(1)
-             SearchableClassPropertyMapping propMap = elasticSearchContextHolder.getMappingContext(domainClassName).getPropertyMapping(marshallingContext.lastParentPropertyName)*/
-                marshaller = new DeepDomainClassMarshaller()
+                def propertyMapping = elasticSearchContextHolder.getMappingContext(getDomainClass(marshallingContext.peekDomainObject()))?.getPropertyMapping(marshallingContext.lastParentPropertyName)
+
+                if (propertyMapping?.isGeoPoint()) {
+                    marshaller = new GeoPointMarshaller()
+                } else {
+                    marshaller = new DeepDomainClassMarshaller()
+                }
             } else {
                 // Check for inherited marshaller matching
-                def inheritedMarshaller = DEFAULT_MARSHALLERS.find { key, value -> key.isAssignableFrom(objectClass)}
+                def inheritedMarshaller = DEFAULT_MARSHALLERS.find { key, value -> key.isAssignableFrom(objectClass) }
                 if (inheritedMarshaller) {
                     marshaller = DEFAULT_MARSHALLERS[inheritedMarshaller.key].newInstance()
                     // If no marshaller was found, use the default one
@@ -119,12 +122,15 @@ class JSONDomainFactory {
 
         marshaller.marshallingContext = marshallingContext
         marshaller.elasticSearchContextHolder = elasticSearchContextHolder
+        marshaller.grailsApplication = grailsApplication
+        marshaller.domainClassUnWrapperChain = domainClassUnWrapperChain
         marshaller.maxDepth = maxDepth
         marshaller.marshall(object)
     }
 
     private GrailsDomainClass getDomainClass(instance) {
-        grailsApplication.domainClasses.find {it.clazz == GrailsHibernateUtil.unwrapIfProxy(instance).class}
+        def instanceClass = domainClassUnWrapperChain.unwrap(instance).class
+        grailsApplication.domainClasses.find { it.clazz == instanceClass }
     }
 
     /**
@@ -133,10 +139,10 @@ class JSONDomainFactory {
      * @param instance A domain class instance.
      * @return
      */
-    public XContentBuilder buildJSON(instance) {
+    XContentBuilder buildJSON(instance) {
         def domainClass = getDomainClass(instance)
         def json = jsonBuilder().startObject()
-        // TODO : add maxDepth in custom mapping (only for "seachable components")
+        // TODO : add maxDepth in custom mapping (only for "searchable components")
         def scm = elasticSearchContextHolder.getMappingContext(domainClass)
         def marshallingContext = new DefaultMarshallingContext(maxDepth: 5, parentFactory: this)
         marshallingContext.push(instance)
@@ -145,6 +151,10 @@ class JSONDomainFactory {
             marshallingContext.lastParentPropertyName = scpm.propertyName
             def res = delegateMarshalling(instance."${scpm.propertyName}", marshallingContext)
             json.field(scpm.propertyName, res)
+			//add the alias
+			if(scpm.getAlias()){
+				json.field(scpm.getAlias(), res)
+			}
         }
         marshallingContext.pop()
         json.endObject()

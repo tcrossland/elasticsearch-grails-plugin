@@ -14,83 +14,109 @@
  * limitations under the License.
  */
 
-package org.grails.plugins.elasticsearch.mapping;
+package org.grails.plugins.elasticsearch.mapping
 
-import org.codehaus.groovy.grails.commons.GrailsDomainClass;
-import org.grails.plugins.elasticsearch.ElasticSearchContextHolder;
+import grails.util.GrailsNameUtils
+import org.codehaus.groovy.grails.commons.GrailsDomainClass
+import org.grails.plugins.elasticsearch.ElasticSearchContextHolder
 
-public class SearchableClassMapping {
-    
+class SearchableClassMapping {
+
     /** All searchable properties */
-    private Collection<SearchableClassPropertyMapping> propertiesMapping;
+    private Collection<SearchableClassPropertyMapping> propertiesMapping
     /** Owning domain class */
-    private GrailsDomainClass domainClass;
+    private GrailsDomainClass domainClass
     /** Searchable root? */
-    private boolean root = true;
-    private boolean all = true;
+    private boolean root = true
+    protected all = true
 
-    public SearchableClassMapping(GrailsDomainClass domainClass, Collection<SearchableClassPropertyMapping> propertiesMapping) {
-        this.domainClass = domainClass;
-        this.propertiesMapping = propertiesMapping;
+    public static final READ_SUFFIX = "_read"
+    public static final WRITE_SUFFIX = "_write"
+
+    String indexName
+
+    SearchableClassMapping(GrailsDomainClass domainClass, Collection<SearchableClassPropertyMapping> propertiesMapping) {
+        this.domainClass = domainClass
+        this.propertiesMapping = propertiesMapping
+        this.indexName = calculateIndexName()
     }
 
-    public SearchableClassPropertyMapping getPropertyMapping(String propertyName) {
-        for(SearchableClassPropertyMapping scpm : propertiesMapping) {
+    SearchableClassPropertyMapping getPropertyMapping(String propertyName) {
+        for (SearchableClassPropertyMapping scpm : propertiesMapping) {
             if (scpm.getPropertyName().equals(propertyName)) {
-                return scpm;
+                return scpm
             }
         }
-        return null;
+        return null
     }
 
-    public Boolean isRoot() {
-        return root;
+    Boolean isRoot() {
+        return root
     }
 
-    public void setRoot(Boolean root) {
-        this.root = root != null && root;
+    void setRoot(Boolean root) {
+        this.root = root != null && root
     }
 
-    public Collection<SearchableClassPropertyMapping> getPropertiesMapping() {
-        return propertiesMapping;
+    void setAll(all) {
+        if (all != null)
+            this.all = all
     }
 
-    public GrailsDomainClass getDomainClass() {
-        return domainClass;
+    Collection<SearchableClassPropertyMapping> getPropertiesMapping() {
+        return propertiesMapping
+    }
+
+    GrailsDomainClass getDomainClass() {
+        return domainClass
     }
 
     /**
      * Validate searchable class mapping.
      * @param contextHolder context holding all known searchable mappings.
      */
-    public void validate(ElasticSearchContextHolder contextHolder) {
-        for(SearchableClassPropertyMapping scpm : propertiesMapping) {
-            scpm.validate(contextHolder);
+    void validate(ElasticSearchContextHolder contextHolder) {
+        for (SearchableClassPropertyMapping scpm : propertiesMapping) {
+            scpm.validate(contextHolder)
         }
     }
 
-
-    /**
-     * @return ElasticSearch index name
-     */
-    public String getIndexName() {
-        String name = domainClass.grailsApplication.config.elasticSearch.index.name ?: domainClass.packageName
+    String calculateIndexName() {
+        String name = domainClass.grailsApplication?.config?.elasticSearch?.index?.name ?: domainClass.packageName
         if (name == null || name.length() == 0) {
             // index name must be lowercase (org.elasticsearch.indices.InvalidIndexNameException)
-            name = domainClass.getPropertyName();
+            name = domainClass.getPropertyName()
         }
-        return name.toLowerCase();
+        return name.toLowerCase()
+    }
+
+    String getIndexingIndex() {
+        return indexName + WRITE_SUFFIX
+    }
+
+    String getQueryingIndex() {
+        return indexName + READ_SUFFIX
     }
 
     /**
      * @return type name for ES mapping.
      */
-    public String getElasticTypeName() {
-        // dot in ES type cause some issue on elastic search
-        return domainClass.getFullName().toLowerCase().replace('.', '_');
+    String getElasticTypeName() {
+        GrailsNameUtils.getPropertyName(domainClass.clazz)
     }
 
-    public boolean isAll() {
-        return all;
+    boolean isAll() {
+        if (all instanceof Boolean) {
+            return all
+        } else if (all instanceof Map) {
+            return all.enabled instanceof Boolean ? all.enabled : true
+        }
+        return true
     }
+
+    @Override
+    public String toString() {
+        return "${getClass().name}(domainClass:$domainClass, propertiesMapping:$propertiesMapping, indexName:$indexName, isAll:${isAll()})"
+    }
+
 }

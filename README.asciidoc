@@ -1,0 +1,84 @@
+== Elasticsearch Grails plugin
+
+An Elasticsearch plugin for Grails; This project is a fork based on the great work done by the guys at https://github.com/mstein/elasticsearch-grails-plugin.
+
+=== Why would you want to fork the original Elasticsearch plugin?
+
+The original Elasticsearch plugin relies on *Hibernate-specific* GORM components, thus rendering it unusable if you back your Grails application by any other database.
+
+=== How can I obtain the plugin?
+
+image:https://travis-ci.org/noamt/elasticsearch-grails-plugin.svg?branch=master["Build Status", link="https://travis-ci.org/noamt/elasticsearch-grails-plugin"]
+
+Just like any other Grails plugin, through the Grails Plugin center.
+Edit your project's +BuildConfig.groovy+ file, by adding the plugin's dependency declaration:
+
+----
+grails.project.dependency.resolution = {
+    plugins {
+        runtime ':elasticsearch:0.0.4.4'
+    }
+}
+----
+
+=== Ohs Nos! I'm hitting a +java.lang.Exception: No datastore implementation specified+
+
+This error means that you probably haven't specified your datastore type in your +Config.groovy+ file.
+This plugin has an auto-index feature which automatically propagates any changes made to searchable Domains into the search index;
+this is done by hooking into GORM's storage events but also requires a reference to the active datastore implementation.
+To fix, edit your project's +Config.groovy+ file and add:
+----
+elasticSearch {
+    ...
+    datastoreImpl = 'nameOfDatastoreBean'
+    ...
+}
+----
+Where the value should be the name of the datastore bean as it is configured in the Spring context; some possible values:
+
+MongoDB::
+    +mongoDatastore+
+Hibernate::
+    +hibernateDatastore+
+
+== License
+
+----
+Copyright 2014 the original author or authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+----
+
+
+
+
+==== Here, have a yak:
+----
+                            _,,,_
+                        .-'`  (  '.
+                     .-'    ,_  ;  \___      _,
+                 __.'    )   \'.__.'(:;'.__.'/
+         __..--""       (     '.__{':');}__.'
+       .'         (    ;    (   .-|` '  |-.
+      /    (       )     )      '-p     q-'
+     (    ;     ;          ;    ; |.---.|
+     ) (              (      ;    \ o  o)
+     |  )     ;       |    )    ) /'.__/
+     )    ;  )    ;   | ;       //
+     ( )             _,\    ;  //
+     ; ( ,_,,-~""~`""   \ (   //
+      \_.'\\_            '.  /<_
+       \\_)--\             \ \--\
+   jgs )--\""`             )--\"`
+       `""`                `""`
+----

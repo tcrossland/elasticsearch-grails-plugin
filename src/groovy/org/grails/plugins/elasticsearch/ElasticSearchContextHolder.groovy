@@ -15,19 +15,16 @@ class ElasticSearchContextHolder {
     Map<String, SearchableClassMapping> mapping = [:]
 
     /**
-     * Setter for dependency injection
-     * @param config
+     * A Set containing all the mappings that were deleted and created again by the migration strategy
      */
-    public void setConfig(ConfigObject config) {
-        this.config = config
-    }
+    Set<Class> deletedOnMigration = [] as Set
 
     /**
      * Adds a mapping context to the current mapping holder
      *
      * @param scm The SearchableClassMapping instance to add
      */
-    public void addMappingContext(SearchableClassMapping scm) {
+    void addMappingContext(SearchableClassMapping scm) {
         mapping[scm.domainClass.fullName] = scm
     }
 
@@ -65,7 +62,7 @@ class ElasticSearchContextHolder {
      * @param clazz
      * @return A boolean determining if the class is root-mapped or not
      */
-    def isRootClass(Class clazz) {
+    boolean isRootClass(Class clazz) {
         mapping.values().any { scm -> scm.domainClass.clazz == clazz && scm.root }
     }
 

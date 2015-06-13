@@ -9,7 +9,7 @@ class Photo extends AbstractImage {
     }
 
     static searchable = {
-        url index:"not_analyzed"
+        url index: "not_analyzed"
     }
 
 
@@ -18,5 +18,9 @@ class Photo extends AbstractImage {
                 "id=" + id +
                 ",url='" + url + '\'' +
                 '}';
+    }
+
+    static mapping = {
+        autoImport(false)
     }
 }

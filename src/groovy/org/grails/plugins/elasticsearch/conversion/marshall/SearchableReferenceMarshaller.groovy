@@ -16,10 +16,8 @@
 
 package org.grails.plugins.elasticsearch.conversion.marshall
 
-import org.codehaus.groovy.grails.commons.ApplicationHolder
-import org.springframework.beans.BeanWrapper
-import org.springframework.beans.BeanWrapperImpl
 import org.codehaus.groovy.runtime.InvokerHelper
+import org.grails.plugins.elasticsearch.mapping.SearchableClassMapping
 
 /**
  * Marshall only searchable class ID.
@@ -34,17 +32,21 @@ class SearchableReferenceMarshaller extends DefaultMarshaller {
      * @param object object to be marshalled
      * @return raw domain class identifier.
      */
-    protected Object doMarshall(Object object) {
+    protected doMarshall(object) {
         assert refClass != null
-        assert refClass.isAssignableFrom(object.getClass()) : "Marshalled object ${object} is not [${refClass}]."
-        def grailsApplication = ApplicationHolder.application
-        def domainClass = grailsApplication.domainClasses.find {it.clazz == refClass}
-        assert domainClass : "Class ${refClass} is not a Grails domain class."
+        assert refClass.isAssignableFrom(object.getClass()): "Marshalled object ${object} is not [${refClass}]."
+        def domainClass = grailsApplication.domainClasses.find { it.clazz == refClass }
+        assert domainClass: "Class ${refClass} is not a Grails domain class."
         // todo encapsulate me
-        def scm = marshallingContext.parentFactory.elasticSearchContextHolder.getMappingContext(domainClass)
+        SearchableClassMapping scm = marshallingContext.parentFactory.elasticSearchContextHolder.getMappingContext(domainClass)
         assert scm
-        return [id:InvokerHelper.invokeMethod(object, "ident", null)]
+
+        def referenceMap = [id: InvokerHelper.invokeMethod(object, 'ident', null)]
+
+        def parentProperty = scm.propertiesMapping.find { it.isParent() }
+        if (parentProperty) {
+            referenceMap.'parent' = object."$parentProperty.propertyName".ident()
+        }
+        return referenceMap
     }
-
-
 }
